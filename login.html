@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>JR Representações — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg:#0f0f11;--surface:#17171a;--surface2:#1e1e22;--border:#2a2a30;
+    --accent:#00e5a0;--danger:#ff4757;--text:#f0f0f2;--text2:#8888a0;--text3:#4a4a5a;
+    --radius:10px;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  .page{display:flex;align-items:center;justify-content:center;height:100%;padding:20px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:400px;}
+  .empresa-logo{display:flex;align-items:center;gap:10px;margin-bottom:24px;}
+  .empresa-icon{width:42px;height:42px;background:linear-gradient(135deg,var(--accent),#00b377);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#000;font-family:var(--mono);}
+  .empresa-nome{display:flex;flex-direction:column;}
+  .empresa-nome strong{font-size:16px;font-weight:600;color:var(--text);}
+  .empresa-nome span{font-size:11px;color:var(--text2);font-family:var(--mono);}
+  .divider{height:1px;background:var(--border);margin-bottom:24px;}
+  .title{font-size:20px;font-weight:600;margin-bottom:4px;}
+  .subtitle{font-size:13px;color:var(--text2);margin-bottom:28px;}
+  .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
+  .form-label{font-size:11px;color:var(--text2);font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;}
+  .form-select,.form-input{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:11px 14px;color:var(--text);font-size:14px;font-family:var(--sans);outline:none;transition:border-color .2s;width:100%;}
+  .form-select:focus,.form-input:focus{border-color:var(--accent);}
+  .form-select option{background:var(--surface2);}
+  .form-input::placeholder{color:var(--text3);}
+  .btn-login{width:100%;background:var(--accent);color:#000;border:none;border-radius:var(--radius);padding:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);margin-top:8px;transition:opacity .2s;}
+  .btn-login:hover{opacity:.85;}
+  .btn-login:disabled{opacity:.4;cursor:not-allowed;}
+  .error-msg{background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.3);color:var(--danger);border-radius:var(--radius);padding:10px 14px;font-size:13px;margin-top:14px;display:none;text-align:center;}
+  .footer{margin-top:28px;padding-top:18px;border-top:1px solid var(--border);text-align:center;font-size:11px;color:var(--text3);font-family:var(--mono);}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,.3);border-top-color:#000;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-users{font-size:12px;color:var(--text3);padding:8px 0;}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="card">
+    <div class="empresa-logo">
+      <div class="empresa-icon">JR</div>
+      <div class="empresa-nome">
+        <strong>JR Representações</strong>
+        <span>Painel Comercial</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+
+    <div class="title">Bem-vindo</div>
+    <div class="subtitle">Faça login para continuar</div>
+
+    <div class="form-group">
+      <label class="form-label">Usuário</label>
+      <select class="form-select" id="username">
+        <option value="">Carregando usuários...</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Senha</label>
+      <input class="form-input" type="password" id="senha" placeholder="Digite sua senha" onkeydown="if(event.key==='Enter') doLogin()"/>
+    </div>
+
+    <button class="btn-login" id="btn-login" onclick="doLogin()">Entrar</button>
+    <button onclick="limparSessao()" style="width:100%;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:13px;color:var(--text2);cursor:pointer;margin-top:8px;font-family:var(--sans);">↩ Limpar / Trocar Usuário</button>
+    <div class="error-msg" id="error-msg"></div>
+
+    <div class="footer">© 2026 JR Representações &nbsp;·&nbsp; <span style="color:var(--accent);font-weight:500;">v1.31</span></div>
+  </div>
+</div>
+
+<script>
+const SUPA_URL='https://jlfltollgwtrqpapqnnp.supabase.co';
+const ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsZmx0b2xsZ3d0cnFwYXBxbm5wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MDcwNDQsImV4cCI6MjA5NDI4MzA0NH0.A9uEdtRQrI0zjFn6W9euH7B3cmMVuRyuTud7_oFSF7g';
+
+if(sessionStorage.getItem('usuario_logado')) location.href='/index.html';
+
+async function carregarUsuarios() {
+  try {
+    const res=await fetch(`${SUPA_URL}/rest/v1/usuarios?select=id_usuario,nome,username&ativo=eq.true&order=nome.asc&apikey=${ANON_KEY}`,{headers:{'Authorization':`Bearer ${ANON_KEY}`}});
+    const data=await res.json();
+    const sel=document.getElementById('username');
+    sel.innerHTML='<option value="">Selecione um usuário...</option>';
+    if(Array.isArray(data)&&data.length>0){
+      data.forEach(u=>{
+        const opt=document.createElement('option');
+        opt.value=u.username;
+        opt.textContent=u.nome+' ('+u.username+')';
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e){ document.getElementById('username').innerHTML='<option value="">Erro ao carregar</option>'; }
+}
+
+async function doLogin() {
+  const username=document.getElementById('username').value;
+  const senha=document.getElementById('senha').value;
+  if(!username){showError('Selecione um usuário.');return;}
+  if(!senha){showError('Digite sua senha.');return;}
+  const btn=document.getElementById('btn-login');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span>Entrando...';
+  hideError();
+  try {
+    const res=await fetch(`${SUPA_URL}/rest/v1/rpc/verificar_login?apikey=${ANON_KEY}`,{
+      method:'POST',
+      headers:{'Authorization':`Bearer ${ANON_KEY}`,'Content-Type':'application/json'},
+      body:JSON.stringify({p_username:username,p_senha:senha})
+    });
+    const data=await res.json();
+    if(data&&data.autenticado){
+      sessionStorage.setItem('usuario_logado',JSON.stringify({id:data.id_usuario,nome:data.nome,username:data.username,admin:data.admin}));
+      location.href='/index.html';
+    } else {
+      showError('Senha incorreta. Tente novamente.');
+      btn.disabled=false; btn.textContent='Entrar';
+    }
+  } catch(e){
+    showError('Erro de conexão. Tente novamente.');
+    btn.disabled=false; btn.textContent='Entrar';
+  }
+}
+
+function showError(msg){ const el=document.getElementById('error-msg'); el.textContent=msg; el.style.display='block'; }
+function hideError(){ document.getElementById('error-msg').style.display='none'; }
+
+carregarUsuarios();
+function limparSessao() {
+  sessionStorage.clear();
+  localStorage.clear();
+  // Recarregar a página para limpar tudo
+  window.location.reload();
+}
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(0,229,160,.15);border:1px solid rgba(0,229,160,.3);color:#00e5a0;padding:10px 16px;border-radius:10px;font-size:13px;z-index:1000;';
+  el.textContent = '✓ ' + msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+}
+
+document.getElementById('senha').focus();
+</script>
+</body>
+</html>
