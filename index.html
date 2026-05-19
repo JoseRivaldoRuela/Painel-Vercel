@@ -75,6 +75,7 @@
   .pill.off{background:rgba(255,71,87,.12);color:var(--danger);}
   .pill.adm{background:rgba(0,122,255,.12);color:var(--accent2);}
   .pill.warn{background:rgba(255,165,0,.12);color:var(--warn);}
+  .pill.vencido{background:rgba(255,71,87,.2);color:var(--danger);border:1px solid rgba(255,71,87,.3);font-weight:700;}
   .sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);font-family:var(--mono);}
 
   /* CONTENT */
@@ -426,6 +427,11 @@ async function switchTab(tab) {
     setActiveMenu(tab);
     await loadItems();
     await renderDashboard();
+  } else if(tab==='contas_receber') {
+    document.getElementById('content-body').innerHTML='<div class="loading" style="padding:40px 0;justify-content:center;"><div class="spinner"></div> Carregando análises...</div>';
+    setActiveMenu(tab);
+    await loadItems();
+    await renderDashboardContas();
   } else {
     document.getElementById('content-body').innerHTML=`<div class="empty-state"><div class="empty-icon">${cfg.hasCNPJ?'👥':'📦'}</div><p>Selecione um ${cfg.label.toLowerCase()} ou crie um novo</p></div>`;
     setActiveMenu(tab);
@@ -472,18 +478,28 @@ function renderList() {
       const atrasado = c.status_recebimento!=='RECEBIDO' && venc < hoje;
       nome = c.clientes?.nome_fantasia||c.clientes?.razao_social||`Cliente #${c.id_cliente}`;
       sub = `Venc: ${venc.toLocaleDateString('pt-BR')} · R$ ${Number(c.valor_original||0).toFixed(2)}`;
-      const sc = c.status_recebimento==='RECEBIDO'?'on':atrasado?'off':'adm';
-      pills = `<span class="pill ${sc}">${c.status_recebimento||'PENDENTE'}${atrasado?' ⚠️':''}</span>`;
+      const sc = c.status_recebimento==='RECEBIDO'?'on':atrasado?'vencido':'warn';
+      const slabel = c.status_recebimento==='RECEBIDO'?'RECEBIDO':atrasado?'VENCIDO':'PENDENTE';
+      pills = `<span class="pill ${sc}">${slabel}</span>`;
     } else if(currentTab==='vendas'){
-      nome = c.codigo_venda || `Venda #${c.id_venda}`;
       const se = (c.status_entrega||'').toUpperCase();
-      const statusColor = se === 'ENTREGUE' ? 'on' : se === 'CANCELADO' ? 'off' : 'warn';
-      const statusLabel = c.status_entrega || 'Pendente';
+      const statusColor = se==='ENTREGUE'?'on':se==='CANCELADO'?'off':'warn';
+      const slabel = se==='ENTREGUE'?'Entregue':se==='CANCELADO'?'Cancelado':'Pendente';
       const nomeCliente = c.clientes?.nome_fantasia||c.clientes?.razao_social||'';
-      const dataVenda = c.data_venda ? new Date(c.data_venda).toLocaleDateString('pt-BR') : '';
+      const dtV = c.data_venda ? new Date(c.data_venda).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+      const dtE = c.data_entrega ? new Date(c.data_entrega).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
       const valorVenda = c.valor_final ? 'R$ '+Number(c.valor_final).toFixed(2) : '';
-      sub = `${nomeCliente}`;
-      pills = `<span class="pill ${statusColor}">${statusLabel}</span>`;
+      return `<div class="item-card ${currentId===c.id_venda?'active':''}" onclick="openItem(${c.id_venda})">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+          <span style="font-size:13px;font-weight:500;font-family:var(--mono);color:var(--accent);">${c.codigo_venda||'#'+c.id_venda}</span>
+          <span class="pill ${statusColor}" style="font-size:9px;padding:1px 6px;">${slabel}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomeCliente}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">
+          <span style="font-size:10px;color:var(--text3);">🛒${dtV}${dtE?' 📦'+dtE:''}</span>
+          <span style="font-size:11px;font-weight:600;color:var(--accent);font-family:var(--mono);">${valorVenda}</span>
+        </div>
+      </div>`;
     } else if(currentTab==='clientes'||currentTab==='fornecedores'){
       nome=c.nome_fantasia||c.razao_social;
       sub=`${c.cidade||'—'}, ${c.estado||'—'}`;
@@ -549,6 +565,8 @@ async function cancelForm() {
   document.getElementById('content-header').style.display='none';
   if(currentTab==='vendas') {
     await renderDashboard();
+  } else if(currentTab==='contas_receber') {
+    await renderDashboardContas();
   } else {
     const cfg=tabConfig[currentTab];
     document.getElementById('content-body').innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>Selecione um ${cfg.label.toLowerCase()} ou crie um novo</p></div>`;
@@ -1153,14 +1171,31 @@ async function saveVenda() {
       id_produto: item.id_produto,
       quantidade: item.quantidade,
       preco_unitario: item.preco_unitario,
-      desconto_item: item.desconto_item||0,
-      subtotal: item.subtotal
+      desconto_item: item.desconto_item||0
     });
   }
 
   toast(isNew?'Venda registrada!':'Venda atualizada!','success');
+  
+  // Salvar itens atuais antes de recarregar
+  const itensAtual = [...itensVenda];
+  const isNovoSalvo = isNew;
+  
   await loadItems();
-  openItem(vendaId);
+  
+  // Restaurar itens e abrir o pedido sem recarregar do banco
+  itensVenda = itensAtual;
+  currentId = vendaId;
+  isNew = false;
+  
+  // Atualizar apenas a sidebar e o botão salvar, sem recriar o form
+  renderList();
+  const btnSave = document.getElementById('btn-save');
+  if(btnSave) { btnSave.disabled=false; btnSave.textContent='✓ Salvar Alterações'; }
+  
+  // Atualizar header
+  const venda = items.find(v=>v.id_venda===vendaId);
+  if(venda) showHeader(venda.codigo_venda||`Venda #${vendaId}`, `#${vendaId}`, `cadastrado em ${new Date(venda.data_cadastro||Date.now()).toLocaleDateString('pt-BR')}`);
 }
 
 async function marcarEntregue(idVenda) {
@@ -1329,8 +1364,9 @@ async function renderFormConta(c) {
 async function saveConta() {
   const btn = document.getElementById('btn-save');
   btn.disabled=true; btn.textContent='Salvando...';
+  const statusSalvo = document.getElementById('f-status_recebimento').value.toUpperCase();
   const data = {
-    status_recebimento: document.getElementById('f-status_recebimento').value.toUpperCase(),
+    status_recebimento: statusSalvo === 'VENCIDO' ? 'PENDENTE' : statusSalvo,
     valor_original: parseFloat(document.getElementById('f-valor_original').value||0),
     valor_recebido: parseFloat(document.getElementById('f-valor_recebido').value||0)||null,
     meio_pagamento: document.getElementById('f-meio_pagamento').value||null,
@@ -1354,6 +1390,225 @@ async function marcarRecebido() {
   const{ok}=await apiPatch(`contas_receber?id_conta=eq.${currentId}`,data);
   if(ok){ toast('Pagamento confirmado!','success'); await loadItems(); openItem(currentId); }
   else toast('Erro ao confirmar','error');
+}
+
+
+// =====================
+// DASHBOARD CONTAS A RECEBER
+// =====================
+async function renderDashboardContas() {
+  const body = document.getElementById('content-body');
+  body.innerHTML = '<div class="loading" style="padding:40px 0;justify-content:center;"><div class="spinner"></div> Carregando análises...</div>';
+
+  const contas = await apiGet('contas_receber?select=*,clientes!fk_conta_cliente(nome_fantasia,razao_social)&order=data_vencimento.asc');
+  if(!Array.isArray(contas)) { body.innerHTML='<div class="empty-state"><div class="empty-icon">⚠️</div><p>Erro ao carregar dados</p></div>'; return; }
+
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const fmt = n => 'R$ ' + Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Classificar contas
+  const recebidas   = contas.filter(c => c.status_recebimento === 'RECEBIDO');
+  const pendentes   = contas.filter(c => c.status_recebimento !== 'RECEBIDO');
+  const vencidas    = pendentes.filter(c => new Date(c.data_vencimento) < hoje);
+  const d7          = pendentes.filter(c => { const d=new Date(c.data_vencimento); return d>=hoje && d<=new Date(hoje.getTime()+7*864e5); });
+  const d15         = pendentes.filter(c => { const d=new Date(c.data_vencimento); return d>new Date(hoje.getTime()+7*864e5) && d<=new Date(hoje.getTime()+15*864e5); });
+  const d30         = pendentes.filter(c => { const d=new Date(c.data_vencimento); return d>new Date(hoje.getTime()+15*864e5) && d<=new Date(hoje.getTime()+30*864e5); });
+  const mais30      = pendentes.filter(c => new Date(c.data_vencimento) > new Date(hoje.getTime()+30*864e5));
+
+  const soma = arr => arr.reduce((s,c)=>s+Number(c.valor_original||0),0);
+  const totalGeral = soma(pendentes) + soma(recebidas);
+
+  body.innerHTML = `
+    <!-- Cards -->
+    <div class="dash-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;">
+      <div class="dash-card green" onclick="listarContas(null,'Todas Recebidas')">
+        <div class="dash-card-label">✅ Recebido</div>
+        <div class="dash-card-value">${fmt(soma(recebidas))}</div>
+        <div class="dash-card-sub">${recebidas.length} conta${recebidas.length!==1?'s':''}</div>
+      </div>
+      <div class="dash-card red" onclick="listarContas('vencido','Vencidas')">
+        <div class="dash-card-label">🔴 Vencidas</div>
+        <div class="dash-card-value">${fmt(soma(vencidas))}</div>
+        <div class="dash-card-sub">${vencidas.length} conta${vencidas.length!==1?'s':''}</div>
+      </div>
+      <div class="dash-card orange" onclick="listarContas('pendente','Em Aberto')">
+        <div class="dash-card-label">⏳ Total em Aberto</div>
+        <div class="dash-card-value">${fmt(soma(pendentes))}</div>
+        <div class="dash-card-sub">${pendentes.length} conta${pendentes.length!==1?'s':''}</div>
+      </div>
+    </div>
+
+    <!-- Gráfico + Vencimentos -->
+    <div class="dash-charts" style="margin-bottom:16px;">
+      <div class="dash-chart-box">
+        <div class="dash-chart-title"><span>📊 Distribuição por Status</span></div>
+        <canvas id="chart-contas" height="200"></canvas>
+      </div>
+
+      <div class="dash-chart-box">
+        <div class="dash-chart-title"><span>📅 Vencimentos em Aberto</span></div>
+        <div class="dash-list">
+          <div class="dash-list-item" onclick="listarContas('vencido','Vencidas')">
+            <span class="dash-list-rank" style="color:var(--danger);">!</span>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;">
+                <span class="dash-list-name" style="color:var(--danger);">Vencidas</span>
+                <span class="dash-list-value" style="color:var(--danger);">${fmt(soma(vencidas))}</span>
+              </div>
+              <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${totalGeral>0?(soma(vencidas)/totalGeral*100).toFixed(0):0}%;background:var(--danger)"></div></div>
+            </div>
+          </div>
+          <div class="dash-list-item" onclick="listarContas('7dias','Vencem em 7 dias')">
+            <span class="dash-list-rank" style="color:var(--warn);">7d</span>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;">
+                <span class="dash-list-name">Próximos 7 dias</span>
+                <span class="dash-list-value">${fmt(soma(d7))}</span>
+              </div>
+              <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${totalGeral>0?(soma(d7)/totalGeral*100).toFixed(0):0}%;background:var(--warn)"></div></div>
+            </div>
+          </div>
+          <div class="dash-list-item" onclick="listarContas('15dias','Vencem em 8-15 dias')">
+            <span class="dash-list-rank">15d</span>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;">
+                <span class="dash-list-name">8 a 15 dias</span>
+                <span class="dash-list-value">${fmt(soma(d15))}</span>
+              </div>
+              <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${totalGeral>0?(soma(d15)/totalGeral*100).toFixed(0):0}%;background:var(--accent2)"></div></div>
+            </div>
+          </div>
+          <div class="dash-list-item" onclick="listarContas('30dias','Vencem em 16-30 dias')">
+            <span class="dash-list-rank">30d</span>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;">
+                <span class="dash-list-name">16 a 30 dias</span>
+                <span class="dash-list-value">${fmt(soma(d30))}</span>
+              </div>
+              <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${totalGeral>0?(soma(d30)/totalGeral*100).toFixed(0):0}%;background:var(--accent)"></div></div>
+            </div>
+          </div>
+          <div class="dash-list-item" onclick="listarContas('mais30','Mais de 30 dias')">
+            <span class="dash-list-rank">+30</span>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;">
+                <span class="dash-list-name">Mais de 30 dias</span>
+                <span class="dash-list-value">${fmt(soma(mais30))}</span>
+              </div>
+              <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${totalGeral>0?(soma(mais30)/totalGeral*100).toFixed(0):0}%;background:var(--text3)"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top clientes inadimplentes -->
+    <div class="dash-chart-box">
+      <div class="dash-chart-title"><span>👥 Maiores Valores em Aberto por Cliente</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="dash-inadim">
+        ${(() => {
+          const clienteMap = {};
+          pendentes.forEach(c => {
+            const nome = c.clientes?.nome_fantasia||c.clientes?.razao_social||`Cliente #${c.id_cliente}`;
+            if(!clienteMap[nome]) clienteMap[nome]={nome,total:0,qtd:0};
+            clienteMap[nome].total+=Number(c.valor_original||0);
+            clienteMap[nome].qtd++;
+          });
+          const top = Object.values(clienteMap).sort((a,b)=>b.total-a.total).slice(0,6);
+          if(!top.length) return '<div style="color:var(--text3);font-size:13px;text-align:center;padding:20px;grid-column:1/-1;">Nenhum valor em aberto</div>';
+          return top.map((c,i)=>`
+            <div class="dash-list-item">
+              <span class="dash-list-rank">${i+1}</span>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span class="dash-list-name">${c.nome}</span>
+                  <span class="dash-list-value">${fmt(c.total)}</span>
+                </div>
+                <div style="font-size:11px;color:var(--text2);">${c.qtd} conta${c.qtd!==1?'s':''}</div>
+                <div class="dash-list-bar"><div class="dash-list-bar-fill" style="width:${top[0].total>0?(c.total/top[0].total*100).toFixed(0):0}%;background:var(--warn)"></div></div>
+              </div>
+            </div>`).join('');
+        })()}
+      </div>
+    </div>`;
+
+  // Gráfico de pizza
+  setTimeout(() => {
+    const ctx = document.getElementById('chart-contas');
+    if(!ctx) return;
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Recebido','Vencido','7 dias','8-15 dias','16-30 dias','+30 dias'],
+        datasets: [{
+          data: [soma(recebidas), soma(vencidas), soma(d7), soma(d15), soma(d30), soma(mais30)],
+          backgroundColor: ['rgba(0,229,160,.7)','rgba(255,71,87,.7)','rgba(255,165,0,.7)','rgba(0,122,255,.7)','rgba(0,229,160,.4)','rgba(136,136,160,.4)'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position:'bottom', labels:{ color:'#8888a0', font:{size:11}, padding:12 } },
+          tooltip: { callbacks: { label: ctx => ctx.label+': '+fmt(ctx.raw) } }
+        }
+      }
+    });
+  }, 100);
+}
+
+function listarContas(filtro, titulo) {
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const fmt = n => 'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  let lista = [...items];
+
+  if(filtro==='vencido') lista=lista.filter(c=>c.status_recebimento!=='RECEBIDO'&&new Date(c.data_vencimento)<hoje);
+  else if(filtro==='pendente') lista=lista.filter(c=>c.status_recebimento!=='RECEBIDO');
+  else if(filtro==='7dias') lista=lista.filter(c=>{const d=new Date(c.data_vencimento);return c.status_recebimento!=='RECEBIDO'&&d>=hoje&&d<=new Date(hoje.getTime()+7*864e5);});
+  else if(filtro==='15dias') lista=lista.filter(c=>{const d=new Date(c.data_vencimento);return c.status_recebimento!=='RECEBIDO'&&d>new Date(hoje.getTime()+7*864e5)&&d<=new Date(hoje.getTime()+15*864e5);});
+  else if(filtro==='30dias') lista=lista.filter(c=>{const d=new Date(c.data_vencimento);return c.status_recebimento!=='RECEBIDO'&&d>new Date(hoje.getTime()+15*864e5)&&d<=new Date(hoje.getTime()+30*864e5);});
+  else if(filtro==='mais30') lista=lista.filter(c=>c.status_recebimento!=='RECEBIDO'&&new Date(c.data_vencimento)>new Date(hoje.getTime()+30*864e5));
+  else if(filtro===null) lista=lista.filter(c=>c.status_recebimento==='RECEBIDO');
+
+  const total = lista.reduce((s,c)=>s+Number(c.valor_original||0),0);
+
+  document.getElementById('content-body').innerHTML = `
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <button onclick="renderDashboardContas()" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;">← Voltar</button>
+      <span style="font-size:15px;font-weight:600;">${titulo}</span>
+      <span style="font-size:12px;color:var(--text2);margin-left:auto;">${lista.length} conta${lista.length!==1?'s':''} · ${fmt(total)}</span>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="background:var(--surface2);">
+          <th style="padding:10px 14px;text-align:left;font-size:11px;color:var(--text2);font-weight:500;">Cliente</th>
+          <th style="padding:10px 14px;text-align:center;font-size:11px;color:var(--text2);font-weight:500;">Vencimento</th>
+          <th style="padding:10px 14px;text-align:center;font-size:11px;color:var(--text2);font-weight:500;">Pagamento</th>
+          <th style="padding:10px 14px;text-align:center;font-size:11px;color:var(--text2);font-weight:500;">Status</th>
+          <th style="padding:10px 14px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Valor</th>
+        </tr></thead>
+        <tbody>
+          ${lista.length===0?'<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text3);">Nenhuma conta encontrada</td></tr>':
+          lista.map(c=>{
+            const venc=new Date(c.data_vencimento);
+            const atras=c.status_recebimento!=='RECEBIDO'&&venc<hoje;
+            const sc=c.status_recebimento==='RECEBIDO'?'on':atras?'vencido':'warn';
+            const sl=c.status_recebimento==='RECEBIDO'?'RECEBIDO':atras?'VENCIDO':'PENDENTE';
+            return `<tr style="border-top:1px solid var(--border);cursor:pointer;" onclick="openItem(${c.id_conta})" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+              <td style="padding:10px 14px;">${c.clientes?.nome_fantasia||c.clientes?.razao_social||'-'}</td>
+              <td style="padding:10px 14px;text-align:center;color:${atras?'var(--danger)':'var(--text2)'};">${venc.toLocaleDateString('pt-BR')}</td>
+              <td style="padding:10px 14px;text-align:center;color:var(--text2);">${c.meio_pagamento||'-'}</td>
+              <td style="padding:10px 14px;text-align:center;"><span class="pill ${sc}">${sl}</span></td>
+              <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent);font-family:var(--mono);">${fmt(c.valor_original)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr style="border-top:2px solid var(--border);background:var(--surface2);">
+          <td colspan="4" style="padding:10px 14px;font-weight:600;">Total</td>
+          <td style="padding:10px 14px;text-align:right;font-weight:700;color:var(--accent);font-family:var(--mono);">${fmt(total)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
 }
 
 // FORM CLIENTES / FORNECEDORES
