@@ -7,7 +7,6 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  /*<!-- teste -->*/
   :root {
     --bg:#0f0f11;--surface:#17171a;--surface2:#1e1e22;--border:#2a2a30;
     --accent:#00e5a0;--accent2:#007aff;--danger:#ff4757;--warn:#ffa502;
@@ -450,14 +449,136 @@ async function loadItems() {
   if(currentTab==='produtos_tab') sel='*,tipo_mercadoria(descricao),fornecedores(nome_fantasia,razao_social)';
   if(currentTab==='precos_especiais') sel='*,clientes(nome_fantasia,razao_social),produtos(nome_mercadoria)';
   let orderParam = `${cfg.order}.asc`;
-  if(currentTab==='vendas') orderParam = 'status_entrega.asc,data_venda.desc';
+  if(currentTab==='vendas') orderParam = 'status_entrega.asc,data_entrega.asc,id_venda.asc';
   const data=await apiGet(`${cfg.table}?select=${sel}&order=${orderParam}`);
   if(!Array.isArray(data)){ toast('Erro ao carregar: '+(data?.message||''),'error'); return; }
+  // Ordenar: pendentes primeiro por data_entrega asc, entregues depois por data_entrega asc
+  if(currentTab==='vendas') {
+    data.sort((a,b) => {
+      const aPend = a.status_entrega !== 'ENTREGUE';
+      const bPend = b.status_entrega !== 'ENTREGUE';
+      if(aPend && !bPend) return -1;
+      if(!aPend && bPend) return 1;
+      // Mesmo grupo - ordenar por data_entrega asc
+      const dA = a.data_entrega || a.data_venda || '';
+      const dB = b.data_entrega || b.data_venda || '';
+      return dA < dB ? -1 : dA > dB ? 1 : 0;
+    });
+  }
   items=data; filtered=[...items];
   renderList();
   document.getElementById('sidebar-footer').textContent=`${items.length} ${cfg.plural.toLowerCase()}`;
   const badge=document.getElementById('badge-'+currentTab);
   if(badge) badge.textContent=items.length;
+}
+
+function cardVenda(c) {
+  const se = (c.status_entrega||'').toUpperCase();
+  const statusColor = se==='ENTREGUE'?'on':se==='CANCELADO'?'off':'warn';
+  const slabel = se==='ENTREGUE'?'Entregue':se==='CANCELADO'?'Cancelado':'Pendente';
+  const nomeCliente = c.clientes?.nome_fantasia||c.clientes?.razao_social||'';
+  const dtV = c.data_venda ? new Date(c.data_venda).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+  const dtE = c.data_entrega ? new Date(c.data_entrega).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+  const valorVenda = c.valor_final ? 'R$ '+Number(c.valor_final).toFixed(2) : '';
+  // Lucro: valor_final - valor_produtos (custo dos itens)
+  // valor_produtos = custo total dos itens (salvo no pedido)
+  const custoPedido = Number(c.valor_produtos||0);
+  const valorFinal = Number(c.valor_final||0);
+  const lucro = custoPedido > 0 ? valorFinal - custoPedido : 0;
+  const lucroFmt = lucro > 0 ? '+R$ '+lucro.toFixed(2) : lucro < 0 ? '-R$ '+Math.abs(lucro).toFixed(2) : '';
+  const lucroCor = lucro >= 0 ? 'var(--accent)' : 'var(--danger)';
+  return `<div class="item-card ${currentId===c.id_venda?'active':''}" onclick="openItem(${c.id_venda})">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+      <span style="font-size:13px;font-weight:500;font-family:var(--mono);color:var(--accent);">${c.codigo_venda||'#'+c.id_venda}</span>
+      <span class="pill ${statusColor}" style="font-size:9px;padding:1px 6px;">${slabel}</span>
+    </div>
+    <div style="font-size:12px;color:var(--text);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomeCliente}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">
+      <span style="font-size:10px;color:var(--text3);">🛒${dtV}${dtE?' 📦'+dtE:''}</span>
+      <span style="font-size:11px;font-weight:600;color:var(--accent);font-family:var(--mono);">${valorVenda}</span>
+    </div>
+    ${lucroFmt ? `<div style="font-size:10px;color:${lucroCor};font-family:var(--mono);text-align:right;">💰 ${lucroFmt}</div>` : ''}
+  </div>`;
+}
+
+// Estado dos filtros de entregues
+let vendaMesFiltro = 0; // 0=todos os meses
+let vendaAnoFiltro = 0; // 0=ano atual
+
+function renderListVendas(el) {
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const hojeStr = hoje.toISOString().slice(0,10);
+  const anoAtual = hoje.getFullYear();
+
+  const pendentes = filtered.filter(v=>v.status_entrega!=='ENTREGUE'&&v.status_entrega!=='CANCELADO');
+  const entregues = filtered.filter(v=>v.status_entrega==='ENTREGUE'||v.status_entrega==='CANCELADO');
+
+  // Extrair anos únicos dos pedidos
+  const anosSet = new Set();
+  filtered.forEach(v => {
+    const dt = v.data_entrega || v.data_venda;
+    if(dt) anosSet.add(new Date(dt).getFullYear());
+  });
+  const anos = Array.from(anosSet).sort((a,b)=>b-a);
+
+  // Se ano não selecionado, usar atual
+  const anoSel = vendaAnoFiltro || anoAtual;
+  const mesSel = vendaMesFiltro; // 0=todos
+
+  // Filtrar entregues por mês+ano
+  let entreguesFiltrados = entregues.filter(v => {
+    const dt = new Date(v.data_entrega || v.data_venda);
+    const anoV = dt.getFullYear();
+    const mesV = dt.getMonth()+1;
+    if(anoV !== anoSel) return false;
+    if(mesSel > 0 && mesV !== mesSel) return false;
+    return true;
+  });
+
+  // Label do filtro
+  const meses = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const labelFiltro = mesSel > 0 ? `${meses[mesSel]}/${anoSel}` : `${anoSel}`;
+
+  let html = '';
+
+  // Pendentes
+  if(pendentes.length) {
+    html += `<div style="font-size:10px;color:var(--warn);font-family:var(--mono);padding:8px 12px 4px;letter-spacing:.05em;font-weight:600;">⏳ PENDENTES (${pendentes.length})</div>`;
+    html += pendentes.map(c=>cardVenda(c)).join('');
+  } else {
+    html += `<div style="font-size:11px;color:var(--text3);padding:10px 12px;">Nenhum pedido pendente</div>`;
+  }
+
+  // Separador + filtros entregues
+  html += `<div style="border-top:1px solid var(--border);margin-top:6px;padding:8px;">
+    <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:6px;">✅ ENTREGUES — ${labelFiltro} (${entreguesFiltrados.length})</div>
+    <div style="display:flex;gap:4px;margin-bottom:6px;">
+      <select id="sel-mes-venda" onchange="vendaMesFiltro=parseInt(this.value);renderList()"
+        style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 6px;font-family:var(--mono);outline:none;">
+        <option value="0" ${mesSel===0?'selected':''}>Todos meses</option>
+        ${meses.slice(1).map((m,i)=>`<option value="${i+1}" ${mesSel===i+1?'selected':''}>${m}</option>`).join('')}
+      </select>
+      <select id="sel-ano-venda" onchange="vendaAnoFiltro=parseInt(this.value);renderList()"
+        style="flex:0 0 70px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 6px;font-family:var(--mono);outline:none;">
+        ${anos.map(a=>`<option value="${a}" ${anoSel===a?'selected':''}>${a}</option>`).join('')}
+      </select>
+    </div>
+  </div>`;
+
+  // Lista de entregues filtrados
+  if(entreguesFiltrados.length) {
+    html += entreguesFiltrados.map(c=>cardVenda(c)).join('');
+  } else {
+    html += `<div style="font-size:11px;color:var(--text3);padding:6px 12px 12px;">Nenhuma entrega em ${labelFiltro}</div>`;
+  }
+
+  el.innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px;">Nenhuma venda</div>';
+  
+  // Restaurar valores dos selects após render
+  const selMes = document.getElementById('sel-mes-venda');
+  const selAno = document.getElementById('sel-ano-venda');
+  if(selMes) selMes.value = mesSel;
+  if(selAno) selAno.value = anoSel;
 }
 
 function filterItems() {
@@ -467,10 +588,18 @@ function filterItems() {
   renderList();
 }
 
+
+
 function renderList() {
   const el=document.getElementById('item-list');
   const cfg=tabConfig[currentTab];
   if(!filtered.length){ el.innerHTML='<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px;">Nenhum encontrado</div>'; return; }
+
+  // VENDAS: lógica especial
+  if(currentTab==='vendas') {
+    renderListVendas(el);
+    return;
+  }
   el.innerHTML=filtered.map(c=>{
     let nome='',sub='',pills='';
     if(currentTab==='contas_receber'){
@@ -483,24 +612,7 @@ function renderList() {
       const slabel = c.status_recebimento==='RECEBIDO'?'RECEBIDO':atrasado?'VENCIDO':'PENDENTE';
       pills = `<span class="pill ${sc}">${slabel}</span>`;
     } else if(currentTab==='vendas'){
-      const se = (c.status_entrega||'').toUpperCase();
-      const statusColor = se==='ENTREGUE'?'on':se==='CANCELADO'?'off':'warn';
-      const slabel = se==='ENTREGUE'?'Entregue':se==='CANCELADO'?'Cancelado':'Pendente';
-      const nomeCliente = c.clientes?.nome_fantasia||c.clientes?.razao_social||'';
-      const dtV = c.data_venda ? new Date(c.data_venda).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
-      const dtE = c.data_entrega ? new Date(c.data_entrega).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
-      const valorVenda = c.valor_final ? 'R$ '+Number(c.valor_final).toFixed(2) : '';
-      return `<div class="item-card ${currentId===c.id_venda?'active':''}" onclick="openItem(${c.id_venda})">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
-          <span style="font-size:13px;font-weight:500;font-family:var(--mono);color:var(--accent);">${c.codigo_venda||'#'+c.id_venda}</span>
-          <span class="pill ${statusColor}" style="font-size:9px;padding:1px 6px;">${slabel}</span>
-        </div>
-        <div style="font-size:12px;color:var(--text);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nomeCliente}</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">
-          <span style="font-size:10px;color:var(--text3);">🛒${dtV}${dtE?' 📦'+dtE:''}</span>
-          <span style="font-size:11px;font-weight:600;color:var(--accent);font-family:var(--mono);">${valorVenda}</span>
-        </div>
-      </div>`;
+      // Tratado abaixo no bloco especial
     } else if(currentTab==='clientes'||currentTab==='fornecedores'){
       nome=c.nome_fantasia||c.razao_social;
       sub=`${c.cidade||'—'}, ${c.estado||'—'}`;
@@ -1128,13 +1240,20 @@ async function saveVenda() {
   const final = Math.max(0,totalProd-desconto);
   const status = document.getElementById('f-status_entrega').value || 'PENDENTE';
 
+  // Calcular custo total dos itens para análise de lucro
+  let custoTotal = 0;
+  itensVenda.forEach(item => {
+    const prod = cacheProdutos.find(p=>p.id_produto===item.id_produto);
+    if(prod) custoTotal += Number(prod.preco_custo||0) * Number(item.quantidade||0);
+  });
+
   const dadosVenda = {
     codigo_venda: codigo,
     id_cliente: parseInt(id_cliente),
     data_venda: new Date(data_venda).toISOString(),
     status_entrega: status,
     data_entrega: document.getElementById('f-data_entrega').value ? new Date(document.getElementById('f-data_entrega').value).toISOString() : null,
-    valor_produtos: totalProd,
+    valor_produtos: custoTotal, // custo real dos itens
     desconto_total: desconto,
     valor_final: final,
     meio_pagamento: document.getElementById('f-meio_pagamento').value || null,  // banco aceita: PIX,BOLETO,DINHEIRO,CARTAO
@@ -1197,6 +1316,97 @@ async function saveVenda() {
   // Atualizar header
   const venda = items.find(v=>v.id_venda===vendaId);
   if(venda) showHeader(venda.codigo_venda||`Venda #${vendaId}`, `#${vendaId}`, `cadastrado em ${new Date(venda.data_cadastro||Date.now()).toLocaleDateString('pt-BR')}`);
+}
+
+async function verLucro(idVenda) {
+  const venda = items.find(v=>v.id_venda===idVenda);
+  if(!venda) return;
+
+  // Buscar itens com preço de custo
+  const itens = await apiGet(`venda_itens?select=*,produtos!fk_item_produto(nome_mercadoria,preco_custo,preco_venda)&id_venda=eq.${idVenda}`);
+  if(!Array.isArray(itens)) { toast('Erro ao carregar itens','error'); return; }
+
+  const fmt = n => 'R$ '+Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  let totalCusto = 0, totalVenda = 0;
+  const linhas = itens.map(i => {
+    const custo = Number(i.produtos?.preco_custo||0);
+    const venda_unit = Number(i.preco_unitario||0);
+    const qty = Number(i.quantidade||0);
+    const desc = Number(i.desconto_item||0);
+    const subtotalVenda = (qty * venda_unit) - desc;
+    const subtotalCusto = qty * custo;
+    const lucroItem = subtotalVenda - subtotalCusto;
+    const margemItem = subtotalCusto > 0 ? ((lucroItem/subtotalCusto)*100).toFixed(1) : '—';
+    totalCusto += subtotalCusto;
+    totalVenda += subtotalVenda;
+    const cor = lucroItem >= 0 ? 'var(--accent)' : 'var(--danger)';
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:8px 12px;color:var(--text);font-size:13px;">${i.produtos?.nome_mercadoria||'Produto'}</td>
+      <td style="padding:8px 12px;text-align:center;color:var(--text2);font-size:12px;">${qty}</td>
+      <td style="padding:8px 12px;text-align:right;color:var(--text2);font-size:12px;">${fmt(custo)}</td>
+      <td style="padding:8px 12px;text-align:right;color:var(--text2);font-size:12px;">${fmt(venda_unit)}</td>
+      <td style="padding:8px 12px;text-align:right;font-size:12px;">${fmt(subtotalVenda)}</td>
+      <td style="padding:8px 12px;text-align:right;font-weight:600;color:${cor};font-size:12px;">${fmt(lucroItem)}</td>
+      <td style="padding:8px 12px;text-align:right;color:${cor};font-size:12px;">${margemItem}%</td>
+    </tr>`;
+  }).join('');
+
+  const lucroTotal = totalVenda - totalCusto;
+  const descontoTotal = Number(venda.desconto_total||0);
+  const lucroLiquido = lucroTotal - descontoTotal;
+  const margemTotal = totalCusto > 0 ? ((lucroLiquido/totalCusto)*100).toFixed(1) : '—';
+  const corTotal = lucroLiquido >= 0 ? 'var(--accent)' : 'var(--danger)';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:700px;">
+      <div class="modal-header">
+        <span class="modal-title">💰 Análise de Lucro — ${venda.codigo_venda||'Pedido #'+idVenda}</span>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="padding:0;">
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="background:var(--surface2);">
+              <th style="padding:10px 12px;text-align:left;font-size:11px;color:var(--text2);font-weight:500;">Produto</th>
+              <th style="padding:10px 12px;text-align:center;font-size:11px;color:var(--text2);font-weight:500;">Qtd</th>
+              <th style="padding:10px 12px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Custo</th>
+              <th style="padding:10px 12px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Venda</th>
+              <th style="padding:10px 12px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Total Venda</th>
+              <th style="padding:10px 12px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Lucro</th>
+              <th style="padding:10px 12px;text-align:right;font-size:11px;color:var(--text2);font-weight:500;">Margem</th>
+            </tr></thead>
+            <tbody>${linhas}</tbody>
+            <tfoot>
+              <tr style="border-top:2px solid var(--border);background:var(--surface2);">
+                <td colspan="4" style="padding:10px 12px;font-weight:600;">Subtotal</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:600;">${fmt(totalVenda)}</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:600;color:var(--accent);">${fmt(lucroTotal)}</td>
+                <td style="padding:10px 12px;text-align:right;color:var(--accent);">${totalCusto>0?((lucroTotal/totalCusto)*100).toFixed(1):'—'}%</td>
+              </tr>
+              ${descontoTotal > 0 ? `<tr style="border-top:1px solid var(--border);">
+                <td colspan="5" style="padding:8px 12px;color:var(--danger);">Desconto Total</td>
+                <td style="padding:8px 12px;text-align:right;color:var(--danger);">- ${fmt(descontoTotal)}</td>
+                <td></td>
+              </tr>` : ''}
+              <tr style="border-top:2px solid var(--accent);background:rgba(0,229,160,.05);">
+                <td colspan="4" style="padding:12px;font-weight:700;font-size:14px;">💰 LUCRO LÍQUIDO</td>
+                <td style="padding:12px;text-align:right;font-weight:700;font-size:14px;">${fmt(Number(venda.valor_final||0))}</td>
+                <td style="padding:12px;text-align:right;font-weight:700;font-size:14px;color:${corTotal};">${fmt(lucroLiquido)}</td>
+                <td style="padding:12px;text-align:right;font-weight:700;color:${corTotal};">${margemTotal}%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
 }
 
 async function marcarEntregue(idVenda) {
@@ -1719,7 +1929,7 @@ async function loadCaches() {
   const[t,f,p,c]=await Promise.all([
     apiGet('tipo_mercadoria?select=id_tipo,descricao&order=descricao.asc'),
     apiGet('fornecedores?select=id_fornecedor,nome_fantasia,razao_social&ativo=eq.true&order=razao_social.asc'),
-    apiGet('produtos?select=id_produto,nome_mercadoria,preco_venda&ativo=eq.true&order=nome_mercadoria.asc'),
+    apiGet('produtos?select=id_produto,nome_mercadoria,preco_venda,preco_custo&ativo=eq.true&order=nome_mercadoria.asc'),
     apiGet('clientes?select=id_cliente,nome_fantasia,razao_social&ativo=eq.true&order=razao_social.asc')
   ]);
   if(Array.isArray(t)) cacheTipos=t;
