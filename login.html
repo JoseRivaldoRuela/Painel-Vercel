@@ -70,7 +70,7 @@
     <button onclick="limparSessao()" style="width:100%;background:none;border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:13px;color:var(--text2);cursor:pointer;margin-top:8px;font-family:var(--sans);">↩ Limpar / Trocar Usuário</button>
     <div class="error-msg" id="error-msg"></div>
 
-    <div class="footer">© 2026 JR Representações &nbsp;·&nbsp; <span style="color:var(--accent);font-weight:500;">v1.42</span></div>
+    <div class="footer">© 2026 JR Representações &nbsp;·&nbsp; <span style="color:var(--accent);font-weight:500;">v1.46</span></div>
   </div>
 </div>
 
@@ -87,12 +87,15 @@ async function carregarUsuarios() {
     const sel=document.getElementById('username');
     sel.innerHTML='<option value="">Selecione um usuário...</option>';
     if(Array.isArray(data)&&data.length>0){
-      data.forEach(u=>{
+      data.forEach((u,i)=>{
         const opt=document.createElement('option');
         opt.value=u.username;
-        opt.textContent=u.nome+' ('+u.username+')';
+        opt.textContent=u.nome;
+        if(i===0) opt.selected=true;
         sel.appendChild(opt);
       });
+      // Focar na senha já que usuário já está selecionado
+      document.getElementById('senha').focus();
     }
   } catch(e){ document.getElementById('username').innerHTML='<option value="">Erro ao carregar</option>'; }
 }
